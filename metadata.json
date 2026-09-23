@@ -1,0 +1,8 @@
+{
+  "name": "SITEPOINT",
+  "description": "One place to manage every construction site. Track progress, tasks, materials, labour, equipment, reports, and inter-site resource sharing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
