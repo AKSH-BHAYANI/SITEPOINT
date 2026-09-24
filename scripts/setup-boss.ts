@@ -2,11 +2,25 @@ import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { pool } from '../src/db/index.ts';
+import { validatePassword } from '../src/utils/passwordPolicy.ts';
 
 async function setupBoss() {
-  const secret = process.env.SITEPOINT_BOOTSTRAP_SECRET;
-  if (!secret || secret.trim() === '') {
+  const secret = process.env.SITEPOINT_BOOTSTRAP_SECRET?.trim();
+  const bootstrapPassword = process.env.SITEPOINT_BOOTSTRAP_PASSWORD;
+
+  if (!secret) {
     console.error('FATAL: SITEPOINT_BOOTSTRAP_SECRET environment variable is missing.');
+    process.exit(1);
+  }
+
+  if (!bootstrapPassword || bootstrapPassword.trim() === '') {
+    console.error('FATAL: SITEPOINT_BOOTSTRAP_PASSWORD environment variable is missing.');
+    process.exit(1);
+  }
+
+  const passwordValidation = validatePassword(bootstrapPassword);
+  if (!passwordValidation.valid) {
+    console.error(`FATAL: Invalid SITEPOINT_BOOTSTRAP_PASSWORD: ${passwordValidation.error}`);
     process.exit(1);
   }
 
@@ -32,7 +46,7 @@ async function setupBoss() {
     }
 
     const email = 'boss@sitepoint.com';
-    const plainPassword = 'SitePoint@2026!';
+    const plainPassword = bootstrapPassword;
     const name = 'SITEPOINT Admin';
     const role = 'BOSS';
     const salt = bcrypt.genSaltSync(10);

@@ -37,6 +37,7 @@ interface AppContextType {
   // Authentication & User Session
   currentUser: UserAccount | null;
   isBootstrapRequired: boolean;
+  bootstrapError: string | null;
   checkBootstrapStatus: () => Promise<boolean>;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   joinCompany: (params: {
@@ -147,16 +148,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [companyUsers, setCompanyUsers] = useState<UserAccount[]>([]);
 
   const [isBootstrapRequired, setIsBootstrapRequired] = useState<boolean>(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   // Check if system requires initial Boss bootstrap
   const checkBootstrapStatus = useCallback(async () => {
     try {
+      setIsLoading(true);
+      setBootstrapError(null);
       const res = await api.checkBootstrapStatus();
       setIsBootstrapRequired(res.bootstrapRequired);
+      if (res.bootstrapRequired) {
+        api.logout();
+        setCurrentUser(null);
+      }
       return res.bootstrapRequired;
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to verify bootstrap status:', err);
+      setIsBootstrapRequired(false);
+      const errorMsg =
+        err.message || 'Database connection error: Unable to verify system initialization status.';
+      setBootstrapError(errorMsg);
       return false;
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -210,33 +224,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Bootstrap session from stored JWT
   useEffect(() => {
     const initAuth = async () => {
-      const token = getStoredToken();
-      if (!token) {
-        await checkBootstrapStatus();
-        setIsLoading(false);
-        return;
-      }
-
+      setIsLoading(true);
       try {
-        const user = await api.getMe();
-        setCurrentUser(user);
-        setRole(user.role);
-        if (user.role === 'SITE_ENGINEER') {
-          setSelectedSiteId(user.assignedSiteIds[0] || null);
+        setBootstrapError(null);
+        const res = await api.checkBootstrapStatus();
+        if (res.bootstrapRequired) {
+          setIsBootstrapRequired(true);
+          api.logout();
+          setCurrentUser(null);
+          setIsLoading(false);
+          return;
         }
-        await refreshData();
-      } catch (err) {
-        console.warn('Stored token expired or invalid:', err);
-        api.logout();
-        setCurrentUser(null);
-        await checkBootstrapStatus();
+
+        setIsBootstrapRequired(false);
+
+        const token = getStoredToken();
+        if (!token) {
+          setIsLoading(false);
+          return;
+        }
+
+        try {
+          const user = await api.getMe();
+          setCurrentUser(user);
+          setRole(user.role);
+          if (user.role === 'SITE_ENGINEER') {
+            setSelectedSiteId(user.assignedSiteIds[0] || null);
+          }
+          await refreshData();
+        } catch (err) {
+          console.warn('Stored token expired or invalid:', err);
+          api.logout();
+          setCurrentUser(null);
+        }
+      } catch (err: any) {
+        console.error('Failed to verify bootstrap status on startup:', err);
+        setIsBootstrapRequired(false);
+        const errorMsg =
+          err.message || 'Database connection error: Unable to verify system initialization status.';
+        setBootstrapError(errorMsg);
       } finally {
         setIsLoading(false);
       }
     };
 
     initAuth();
-  }, [refreshData, checkBootstrapStatus]);
+  }, [refreshData]);
 
   // Real-time synchronization via Server-Sent Events (SSE)
   useEffect(() => {
@@ -624,6 +657,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         currentUser,
         isBootstrapRequired,
+        bootstrapError,
         checkBootstrapStatus,
         login,
         joinCompany,

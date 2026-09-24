@@ -250,7 +250,10 @@ router.post('/auth/bootstrap-boss', loginRateLimiter, async (req, res) => {
     }
 
     const bossEmail = (req.body.email || 'boss@sitepoint.com').trim().toLowerCase();
-    const bossPassword = req.body.password || 'SitePoint@2026!';
+    const bossPassword = req.body.password;
+    if (!bossPassword || typeof bossPassword !== 'string') {
+      return res.status(400).json({ error: 'Password is required.' });
+    }
     const bossPasswordValidation = validatePassword(bossPassword);
     if (!bossPasswordValidation.valid) {
       return res.status(400).json({ error: bossPasswordValidation.error });

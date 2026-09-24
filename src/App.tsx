@@ -24,10 +24,20 @@ import { NewSiteModal } from './components/modals/NewSiteModal';
 import { CompleteSiteModal } from './components/modals/CompleteSiteModal';
 import { ChangeSiteStatusModal } from './components/modals/ChangeSiteStatusModal';
 
-import { Building2 } from 'lucide-react';
+import { Building2, AlertCircle, RefreshCw } from 'lucide-react';
 
 const MainApp: React.FC = () => {
-  const { currentUser, role, selectedSiteId, setSelectedSiteId, sites, isLoading, isBootstrapRequired, checkBootstrapStatus } = useApp();
+  const {
+    currentUser,
+    role,
+    selectedSiteId,
+    setSelectedSiteId,
+    sites,
+    isLoading,
+    isBootstrapRequired,
+    bootstrapError,
+    checkBootstrapStatus,
+  } = useApp();
 
   // If initial auth or sync is booting, display sleek loader
   if (isLoading) {
@@ -38,6 +48,30 @@ const MainApp: React.FC = () => {
         </div>
         <div className="text-sm font-bold tracking-wider text-slate-200 uppercase">SITEPOINT</div>
         <div className="text-xs text-slate-400 mt-1">Connecting to multi-site database...</div>
+      </div>
+    );
+  }
+
+  // If database is temporarily unavailable, show clear error and allow retry
+  if (bootstrapError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-3xl p-8 text-center shadow-2xl">
+          <div className="h-12 w-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-4 border border-rose-500/30">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-bold text-white mb-2">Database Unavailable</h2>
+          <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+            {bootstrapError}
+          </p>
+          <button
+            onClick={() => checkBootstrapStatus()}
+            className="w-full flex items-center justify-center py-3 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-xl transition cursor-pointer shadow-md"
+          >
+            <RefreshCw className="h-4 w-4 mr-2 stroke-[2.5]" />
+            <span>Retry Connection</span>
+          </button>
+        </div>
       </div>
     );
   }
