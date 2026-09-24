@@ -1,5 +1,6 @@
 import {
   ConstructionSite,
+  CreateSiteInput,
   Task,
   Material,
   LabourCategory,
@@ -122,20 +123,6 @@ export const api = {
     return data;
   },
 
-  async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
-    return request('/api/auth/forgot-password', {
-      method: 'POST',
-      body: JSON.stringify({ email }),
-    });
-  },
-
-  async resetPasswordWithToken(token: string, newPassword: string): Promise<{ success: boolean; message: string }> {
-    return request('/api/auth/reset-password', {
-      method: 'POST',
-      body: JSON.stringify({ token, newPassword }),
-    });
-  },
-
   async getMe(): Promise<UserAccount> {
     return request<UserAccount>('/api/auth/me');
   },
@@ -227,7 +214,7 @@ export const api = {
     return request<ConstructionSite[]>('/api/sites');
   },
 
-  async createSite(siteData: any): Promise<ConstructionSite> {
+  async createSite(siteData: CreateSiteInput): Promise<ConstructionSite> {
     return request<ConstructionSite>('/api/sites', {
       method: 'POST',
       body: JSON.stringify(siteData),

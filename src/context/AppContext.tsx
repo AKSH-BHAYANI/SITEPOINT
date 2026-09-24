@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import {
   Role,
   ConstructionSite,
+  CreateSiteInput,
   Task,
   Material,
   LabourCategory,
@@ -118,7 +119,7 @@ interface AppContextType {
   addDocument: (doc: Omit<SiteDocument, 'id' | 'uploadedDate'>) => Promise<void>;
 
   // Site lifecycle actions
-  createSite: (siteData: Omit<ConstructionSite, 'id' | 'progressPercent'> & { initialTasks?: Array<Omit<Task, 'id' | 'siteId'>> }) => Promise<void>;
+  createSite: (siteData: CreateSiteInput) => Promise<ConstructionSite>;
   updateSiteStatus: (siteId: string, status: SiteStatus, holdReason?: string) => Promise<void>;
   completeSite: (siteId: string, details: SiteCompletionDetails) => Promise<void>;
 }
@@ -633,11 +634,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await refreshData();
   };
 
-  const createSite = async (
-    siteData: Omit<ConstructionSite, 'id' | 'progressPercent'> & { initialTasks?: Array<Omit<Task, 'id' | 'siteId'>> }
-  ) => {
-    await api.createSite(siteData);
+  const createSite = async (siteData: CreateSiteInput): Promise<ConstructionSite> => {
+    const created = await api.createSite(siteData);
     await refreshData();
+    return created;
   };
 
   const updateSiteStatus = async (siteId: string, status: SiteStatus, holdReason?: string) => {

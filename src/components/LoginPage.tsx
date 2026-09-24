@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   AlertCircle,
   UserPlus,
-  KeyRound,
   User,
   Phone,
   HelpCircle,
@@ -19,12 +18,11 @@ import {
   Clock,
   ShieldCheck
 } from 'lucide-react';
-import { api } from '../services/api';
 import { validatePassword, PASSWORD_REQUIREMENT_MESSAGE } from '../utils/passwordPolicy';
 
 export const LoginPage: React.FC = () => {
   const { login, joinCompany } = useApp();
-  const [activeTab, setActiveTab] = useState<'LOGIN' | 'JOIN' | 'RESET'>('LOGIN');
+  const [activeTab, setActiveTab] = useState<'LOGIN' | 'JOIN'>('LOGIN');
 
   // Login form state
   const [email, setEmail] = useState('');
@@ -39,14 +37,6 @@ export const LoginPage: React.FC = () => {
   const [joinTitle, setJoinTitle] = useState('');
   const [joinPhone, setJoinPhone] = useState('');
   const [joinSuccessMessage, setJoinSuccessMessage] = useState<string | null>(null);
-
-  // Reset password state
-  const [resetEmail, setResetEmail] = useState('');
-  const [resetToken, setResetToken] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [resetStep, setResetStep] = useState<1 | 2>(1);
-  const [resetNotice, setResetNotice] = useState<string | null>(null);
-  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -108,49 +98,6 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleRequestResetToken = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setResetNotice(null);
-    setIsSubmitting(true);
-
-    try {
-      const res = await api.forgotPassword(resetEmail.trim());
-      setResetNotice(res.message);
-      setResetStep(2);
-    } catch (err: any) {
-      setError(err.message || 'Failed to generate password reset request.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleConfirmPasswordReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setResetSuccess(null);
-
-    const passwordValidation = validatePassword(newPassword);
-    if (!passwordValidation.valid) {
-      setError(passwordValidation.error || PASSWORD_REQUIREMENT_MESSAGE);
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    try {
-      const res = await api.resetPasswordWithToken(resetToken.trim(), newPassword);
-      setResetSuccess(res.message || 'Password successfully updated. You may now sign in.');
-      setResetStep(1);
-      setResetToken('');
-      setNewPassword('');
-    } catch (err: any) {
-      setError(err.message || 'Failed to update password with provided token.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-10 sm:px-6 lg:px-8 text-slate-100 selection:bg-amber-500 selection:text-white">
       {/* Brand Header */}
@@ -204,21 +151,6 @@ export const LoginPage: React.FC = () => {
             >
               Join Company
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('RESET');
-                setError(null);
-                setJoinSuccessMessage(null);
-              }}
-              className={`flex-1 text-xs font-bold pb-2 text-center transition cursor-pointer border-b-2 -mb-2 ${
-                activeTab === 'RESET'
-                  ? 'border-amber-500 text-amber-950 font-black'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              Password Reset
-            </button>
           </div>
 
           {/* Feedback Messages */}
@@ -236,13 +168,6 @@ export const LoginPage: React.FC = () => {
                 <div className="font-bold text-amber-950">Request Submitted</div>
                 <div className="mt-0.5 text-amber-800 leading-relaxed">{joinSuccessMessage}</div>
               </div>
-            </div>
-          )}
-
-          {resetSuccess && (
-            <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-start space-x-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-              <span>{resetSuccess}</span>
             </div>
           )}
 
@@ -273,16 +198,6 @@ export const LoginPage: React.FC = () => {
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
                     Password
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('RESET');
-                      setResetEmail(email);
-                    }}
-                    className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 cursor-pointer"
-                  >
-                    Forgot password?
-                  </button>
                 </div>
                 <div className="relative rounded-xl shadow-2xs">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -467,101 +382,6 @@ export const LoginPage: React.FC = () => {
                 </button>
               </div>
             </form>
-          )}
-
-          {/* TAB 3: PASSWORD RESET */}
-          {activeTab === 'RESET' && (
-            <div className="space-y-4">
-              {resetStep === 1 ? (
-                <form onSubmit={handleRequestResetToken} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                      Account Email
-                    </label>
-                    <div className="relative rounded-xl shadow-2xs">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                        <Mail className="h-4 w-4 text-slate-400" />
-                      </div>
-                      <input
-                        type="email"
-                        required
-                        value={resetEmail}
-                        onChange={(e) => setResetEmail(e.target.value)}
-                        placeholder="name@company.com"
-                        className="block w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="pt-2">
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-xl shadow-md text-sm font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 transition cursor-pointer"
-                    >
-                      <KeyRound className="mr-2 h-4 w-4 stroke-[2.5]" />
-                      <span>{isSubmitting ? 'Requesting...' : 'Request Password Reset'}</span>
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <form onSubmit={handleConfirmPasswordReset} className="space-y-4">
-                  {resetNotice && (
-                    <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-xs font-medium">
-                      {resetNotice}
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                      Verification Token
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={resetToken}
-                      onChange={(e) => setResetToken(e.target.value)}
-                      placeholder="Enter the verification token"
-                      className="block w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono text-slate-900 focus:outline-hidden focus:bg-white focus:border-amber-500 transition"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                      New Password *
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter your new password"
-                      className="block w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:outline-hidden focus:bg-white focus:border-amber-500 transition"
-                    />
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      Password must be at least 8 characters and contain at least one letter and one number.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center space-x-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setResetStep(1)}
-                      className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="flex-1 flex justify-center items-center py-2.5 px-4 border border-transparent rounded-xl shadow-md text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 transition cursor-pointer"
-                    >
-                      <span>{isSubmitting ? 'Updating...' : 'Set New Password'}</span>
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
           )}
         </div>
 

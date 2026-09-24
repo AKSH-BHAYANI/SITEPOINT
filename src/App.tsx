@@ -219,7 +219,7 @@ const MainApp: React.FC = () => {
       {activeModal === 'newSite' && (
         <NewSiteModal
           onClose={() => setActiveModal(null)}
-          onSuccess={(newSite) => setSelectedSiteId(newSite.id)}
+          onSuccess={(siteOrId: any) => setSelectedSiteId(typeof siteOrId === 'string' ? siteOrId : (siteOrId?.id || null))}
         />
       )}
 

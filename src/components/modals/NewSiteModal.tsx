@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { ConstructionSite } from '../../types';
-import { X, Building2, Calendar, User, MapPin, DollarSign, FileText, CheckCircle2 } from 'lucide-react';
+import { CreateSiteInput } from '../../types';
+import { X, Building2, Calendar, User, MapPin, DollarSign, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface Props {
   onClose: () => void;
@@ -18,7 +18,9 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
   const [projectType, setProjectType] = useState<'Residential' | 'Commercial' | 'Infrastructure' | 'Industrial' | 'Institutional'>('Residential');
   const [location, setLocation] = useState('');
   const [client, setClient] = useState('');
+  const [projectManagerId, setProjectManagerId] = useState(activeManagers[0]?.id || '');
   const [projectManager, setProjectManager] = useState(activeManagers[0]?.name || 'Unassigned Project Manager');
+  const [siteEngineerId, setSiteEngineerId] = useState(activeEngineers[0]?.id || '');
   const [siteEngineer, setSiteEngineer] = useState(activeEngineers[0]?.name || 'Unassigned Site Engineer');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [targetEndDate, setTargetEndDate] = useState(
@@ -27,10 +29,15 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
   const [budget, setBudget] = useState('');
   const [description, setDescription] = useState('');
   const [initialTaskName, setInitialTaskName] = useState('Site mobilization and perimeter setup');
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !location.trim() || !client.trim()) return;
+
+    setError(null);
+    setIsSubmitting(true);
 
     // Generate code from initials of name
     const initials = name
@@ -41,18 +48,20 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
       .slice(0, 4) || 'SITE';
     const code = `${initials}-${Math.floor(10 + Math.random() * 90)}`;
 
-    const sitePayload: Omit<ConstructionSite, 'id' | 'progressPercent'> & { initialTasks?: any[] } = {
+    const sitePayload: CreateSiteInput = {
       name: name.trim(),
       code,
       location: location.trim(),
       client: client.trim(),
       projectManager,
       siteEngineer,
+      projectManagerId: projectManagerId || undefined,
+      siteEngineerId: siteEngineerId || undefined,
       projectType,
       startDate,
       targetEndDate,
       status: 'Active',
-      budget: budget.trim() ? budget.trim() : undefined,
+      initialBudget: budget.trim() ? budget.trim() : undefined,
       description: description.trim() ? description.trim() : undefined,
       initialTasks: initialTaskName.trim()
         ? [
@@ -71,11 +80,35 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
         : undefined,
     };
 
-    createSite(sitePayload);
-    if (onSuccess) {
-      onSuccess(name);
+    try {
+      const createdSite = await createSite(sitePayload);
+      const newId = createdSite?.id || sitePayload.code || name;
+      onSuccess?.(newId);
+      onClose();
+    } catch (err: any) {
+      // Keep modal open
+      // Show a clear user-facing error message without exposing SQL/secrets
+      let safeMsg = 'Please verify your inputs and try again.';
+      if (err?.message) {
+        const msg = String(err.message);
+        if (
+          !msg.includes('SELECT') &&
+          !msg.includes('INSERT') &&
+          !msg.includes('UPDATE') &&
+          !msg.includes('DELETE') &&
+          !msg.includes('syntax error') &&
+          !msg.includes('violates') &&
+          !msg.includes('password') &&
+          !msg.includes('secret') &&
+          !msg.includes('at ')
+        ) {
+          safeMsg = msg;
+        }
+      }
+      setError(`Failed to create site: ${safeMsg}`);
+    } finally {
+      setIsSubmitting(false);
     }
-    onClose();
   };
 
   return (
@@ -180,24 +213,29 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
               </label>
               {activeManagers.length > 0 ? (
                 <select
-                  value={projectManager}
-                  onChange={(e) => setProjectManager(e.target.value)}
+                  value={projectManagerId}
+                  onChange={(e) => {
+                    const selected = activeManagers.find((m) => m.id === e.target.value);
+                    if (selected) {
+                      setProjectManagerId(selected.id);
+                      setProjectManager(selected.name);
+                    } else {
+                      setProjectManagerId('');
+                      setProjectManager('Unassigned Project Manager');
+                    }
+                  }}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 focus:border-amber-500 focus:outline-hidden"
                 >
                   {activeManagers.map((mgr) => (
-                    <option key={mgr.id} value={mgr.name}>
+                    <option key={mgr.id} value={mgr.id}>
                       {mgr.name} ({mgr.email})
                     </option>
                   ))}
                 </select>
               ) : (
-                <input
-                  type="text"
-                  value={projectManager}
-                  onChange={(e) => setProjectManager(e.target.value)}
-                  placeholder="Enter manager name or unassigned"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 focus:border-amber-500 focus:outline-hidden"
-                />
+                <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-500">
+                  Unassigned Project Manager
+                </div>
               )}
             </div>
 
@@ -207,24 +245,29 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
               </label>
               {activeEngineers.length > 0 ? (
                 <select
-                  value={siteEngineer}
-                  onChange={(e) => setSiteEngineer(e.target.value)}
+                  value={siteEngineerId}
+                  onChange={(e) => {
+                    const selected = activeEngineers.find((eng) => eng.id === e.target.value);
+                    if (selected) {
+                      setSiteEngineerId(selected.id);
+                      setSiteEngineer(selected.name);
+                    } else {
+                      setSiteEngineerId('');
+                      setSiteEngineer('Unassigned Site Engineer');
+                    }
+                  }}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 focus:border-amber-500 focus:outline-hidden"
                 >
                   {activeEngineers.map((eng) => (
-                    <option key={eng.id} value={eng.name}>
+                    <option key={eng.id} value={eng.id}>
                       {eng.name} ({eng.email})
                     </option>
                   ))}
                 </select>
               ) : (
-                <input
-                  type="text"
-                  value={siteEngineer}
-                  onChange={(e) => setSiteEngineer(e.target.value)}
-                  placeholder="Enter engineer name or unassigned"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 focus:border-amber-500 focus:outline-hidden"
-                />
+                <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-500">
+                  Unassigned Site Engineer
+                </div>
               )}
             </div>
           </div>
@@ -311,21 +354,31 @@ export const NewSiteModal: React.FC<Props> = ({ onClose, onSuccess }) => {
             />
           </div>
 
+          {/* Error Message */}
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800 flex items-start space-x-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-200">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              disabled={isSubmitting}
+              className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-amber-500 hover:bg-amber-600 px-5 py-2.5 text-xs font-bold text-slate-950 transition shadow-xs flex items-center space-x-1.5 cursor-pointer"
+              disabled={isSubmitting}
+              className="rounded-xl bg-amber-500 hover:bg-amber-600 px-5 py-2.5 text-xs font-bold text-slate-950 transition shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />
-              <span>Create Construction Site</span>
+              <span>{isSubmitting ? 'Creating Site...' : 'Create Construction Site'}</span>
             </button>
           </div>
         </form>

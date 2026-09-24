@@ -31,15 +31,24 @@ export function addSSEClient(id: string, res: Response, userId: string, role: st
 
 export function broadcastChange(event: {
   type: string;
+  companyId: string;
   siteId?: string;
   action: string;
   data?: any;
 }) {
+  const targetCompanyId = event.companyId;
+  if (!targetCompanyId) {
+    return;
+  }
   const payload = `event: change\ndata: ${JSON.stringify(event)}\n\n`;
   for (const client of clients.values()) {
+    // Tenant isolation: deliver event only to clients of the matching company
+    if (client.companyId !== targetCompanyId) {
+      continue;
+    }
     try {
       client.res.write(payload);
-    } catch (e) {
+    } catch {
       clients.delete(client.id);
     }
   }

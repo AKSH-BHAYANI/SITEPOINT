@@ -32,19 +32,6 @@ export const users = pgTable('users', {
   index('idx_users_membership_status').on(table.membershipStatus),
 ]);
 
-// 2b. Password Reset Tokens
-export const passwordResetTokens = pgTable('password_reset_tokens', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  tokenHash: text('token_hash').notNull(),
-  expiresAt: timestamp('expires_at').notNull(),
-  usedAt: timestamp('used_at'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-}, (table) => [
-  index('idx_pwd_reset_tokens_hash').on(table.tokenHash),
-  index('idx_pwd_reset_tokens_user').on(table.userId),
-]);
-
 // 3. User Roles (Secondary audit / historical role grants)
 export const userRoles = pgTable('user_roles', {
   id: text('id').primaryKey(),
@@ -61,6 +48,7 @@ export const sites = pgTable('sites', {
   companyId: text('company_id').references(() => companies.id).notNull(),
   name: text('name').notNull(),
   code: text('code').notNull(),
+  projectType: text('project_type'),
   location: text('location').notNull(),
   client: text('client').notNull(),
   projectManagerName: text('project_manager_name'),
@@ -221,6 +209,7 @@ export const equipment = pgTable('equipment', {
   status: text('status').default('Available').notNull(), // 'Available', 'In Use', 'Breakdown', 'Maintenance'
   operatorName: text('operator_name'),
   hoursOperated: integer('hours_operated').default(0).notNull(),
+  lastMaintenanceDate: text('last_maintenance_date'),
   nextServiceDate: text('next_service_date'),
   breakdownReason: text('breakdown_reason'),
   notes: text('notes'),

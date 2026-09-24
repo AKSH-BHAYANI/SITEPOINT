@@ -82,6 +82,7 @@ export interface Equipment {
   operatorName?: string;
   lastMaintenance: string;
   nextMaintenance: string;
+  lastMaintenanceDate?: string;
   nextServiceDate?: string;
   lastUpdated?: string;
   hoursOperated?: number;
@@ -204,16 +205,28 @@ export interface ConstructionSite {
   status: SiteStatus;
   holdReason?: string;
   budget?: string;
+  initialBudget?: string;
   description?: string;
   completionDetails?: SiteCompletionDetails;
 }
+
+export type CreateSiteInput = Omit<ConstructionSite, 'id' | 'progressPercent'> & {
+  projectManagerId?: string;
+  siteEngineerId?: string;
+  initialTasks?: Array<Omit<Task, 'id' | 'siteId'>>;
+};
 
 export interface UserAccount {
   id: string;
   name: string;
   email: string;
   role: Role;
+  companyId?: string;
+  membershipStatus?: 'PENDING' | 'ACTIVE' | 'REJECTED' | 'DEACTIVATED';
+  membership_status?: string;
   assignedSiteIds: string[];
   title: string;
   phone?: string;
+  isActive?: boolean;
+  createdAt?: string;
 }

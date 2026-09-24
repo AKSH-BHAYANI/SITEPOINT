@@ -29,25 +29,16 @@ async function startServer() {
 
   // Health check endpoint
   app.get('/api/health', async (_req, res) => {
-    const dbDiag = getSafeDatabaseDiagnostics();
     try {
-      const dbCheck = await pool.query('SELECT NOW() as time');
+      await pool.query('SELECT 1');
       res.json({
         status: 'ok',
-        database: 'PostgreSQL (Connected)',
-        databaseHost: dbDiag.host,
-        databaseName: dbDiag.database,
-        dbTime: dbCheck.rows[0].time,
-        system: 'SITEPOINT Construction Control Center',
-        timestamp: new Date().toISOString(),
+        database: 'connected',
       });
-    } catch (err: any) {
+    } catch {
       res.status(503).json({
-        status: 'degraded',
-        database: 'Error connecting: ' + err.message,
-        databaseHost: dbDiag.host,
-        databaseName: dbDiag.database,
-        timestamp: new Date().toISOString(),
+        status: 'error',
+        database: 'disconnected',
       });
     }
   });

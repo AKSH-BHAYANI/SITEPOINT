@@ -506,6 +506,7 @@ router.post('/auth/join', joinRateLimiter, async (req, res) => {
     // Broadcast membership request to connected Boss users
     broadcastChange({
       type: 'membership_request',
+      companyId: company.id,
       action: 'created',
       data: {
         companyId: company.id,
@@ -533,107 +534,6 @@ router.post('/auth/register', (_req, res) => {
   });
 });
 
-// Secure Password Reset Request (Generates short-lived reset token)
-router.post('/auth/forgot-password', loginRateLimiter, async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Email address is required.' });
-    }
-
-    const trimmedEmail = email.trim().toLowerCase();
-    const user = await getOne<{ id: string; company_id: string; is_active: boolean; membership_status: string }>(
-      'SELECT id, company_id, is_active, membership_status FROM users WHERE LOWER(email) = ?',
-      [trimmedEmail]
-    );
-
-    let rawToken: string | undefined;
-
-    if (user && user.is_active !== false && user.membership_status === 'ACTIVE') {
-      rawToken = crypto.randomBytes(32).toString('hex');
-      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-      const tokenId = `prt-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute expiration
-
-      await execute(
-        `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [tokenId, user.id, tokenHash, expiresAt, new Date()]
-      );
-
-      await logAudit(
-        user.company_id,
-        null,
-        user.id,
-        'FORGOT_PASSWORD_REQUEST',
-        'users',
-        user.id,
-        `Password reset requested for: ${trimmedEmail}`,
-        req.ip
-      );
-    }
-
-    // Generic response to prevent user email enumeration
-    return res.json({
-      success: true,
-      message: 'If an active account with this email exists, password reset instructions have been dispatched.',
-    });
-  } catch (err: any) {
-    console.error('Forgot password error:', err);
-    return res.status(500).json({ error: 'Failed to process password reset request.' });
-  }
-});
-
-// Complete Secure Password Reset
-router.post('/auth/reset-password', loginRateLimiter, async (req, res) => {
-  try {
-    const { token, newPassword } = req.body;
-    if (!token || !newPassword) {
-      return res.status(400).json({ error: 'Reset token and new password are required.' });
-    }
-
-    const passwordValidation = validatePassword(newPassword);
-    if (!passwordValidation.valid) {
-      return res.status(400).json({ error: passwordValidation.error });
-    }
-
-    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
-    const resetRecord = await getOne<{ id: string; user_id: string }>(
-      `SELECT id, user_id FROM password_reset_tokens
-       WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()`,
-      [tokenHash]
-    );
-
-    if (!resetRecord) {
-      return res.status(400).json({ error: 'Invalid or expired password reset token.' });
-    }
-
-    const salt = bcrypt.genSaltSync(10);
-    const hash = bcrypt.hashSync(newPassword, salt);
-    const now = new Date();
-
-    await withTransaction(async (client) => {
-      await client.query('UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3', [
-        hash,
-        now,
-        resetRecord.user_id,
-      ]);
-      await client.query('UPDATE password_reset_tokens SET used_at = $1 WHERE id = $2', [
-        now,
-        resetRecord.id,
-      ]);
-    });
-
-    return res.json({
-      success: true,
-      message: 'Password updated successfully. You may now sign in with your new password.',
-    });
-  } catch (err: any) {
-    console.error('Password reset error:', err);
-    return res.status(500).json({ error: 'Failed to reset password.' });
-  }
-});
-
 // Firebase authentication route is deactivated - all logins flow through PostgreSQL + JWT
 router.post('/auth/firebase-login', (_req, res) => {
   return res.status(410).json({
@@ -643,7 +543,7 @@ router.post('/auth/firebase-login', (_req, res) => {
 
 router.get('/auth/me', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await getOne(
+    const user = await getOne<{ id: string; company_id: string; name: string; email: string; role: string; title: string; phone: string; membership_status: string }>(
       'SELECT id, company_id, name, email, role, title, phone, membership_status FROM users WHERE id = ?',
       [req.user!.id]
     );
@@ -664,6 +564,7 @@ router.get('/auth/me', authMiddleware, async (req: AuthRequest, res: Response) =
       title: user.title,
       phone: user.phone,
       membershipStatus: user.membership_status,
+      membership_status: user.membership_status,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -672,13 +573,42 @@ router.get('/auth/me', authMiddleware, async (req: AuthRequest, res: Response) =
 
 router.get('/auth/users', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const users = await query(
-      `SELECT id, name, email, role, title, phone, membership_status FROM users
+    const users = await query<any>(
+      `SELECT id, company_id, name, email, role, title, phone, is_active, membership_status, created_at FROM users
        WHERE company_id = ? AND is_active = true AND membership_status = 'ACTIVE'
        ORDER BY name ASC`,
       [req.user!.companyId]
     );
-    return res.json(users);
+
+    const assignments = await query<{ user_id: string; site_id: string }>(
+      `SELECT user_id, site_id FROM site_members WHERE company_id = ?`,
+      [req.user!.companyId]
+    );
+
+    const userSitesMap = new Map<string, string[]>();
+    for (const a of assignments) {
+      if (!userSitesMap.has(a.user_id)) {
+        userSitesMap.set(a.user_id, []);
+      }
+      userSitesMap.get(a.user_id)!.push(a.site_id);
+    }
+
+    const formattedUsers = users.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      title: u.title || '',
+      phone: u.phone || undefined,
+      companyId: u.company_id,
+      membershipStatus: u.membership_status,
+      membership_status: u.membership_status,
+      assignedSiteIds: userSitesMap.get(u.id) || [],
+      isActive: u.is_active,
+      createdAt: u.created_at ? new Date(u.created_at).toISOString() : undefined,
+    }));
+
+    return res.json(formattedUsers);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -742,7 +672,7 @@ router.post('/company/regenerate-code', authMiddleware, requireRole(['BOSS']), a
       req.ip
     );
 
-    broadcastChange({ type: 'company', action: 'CODE_REGENERATED', data: { companyId: req.user!.companyId } });
+    broadcastChange({ type: 'company', companyId: req.user!.companyId, action: 'CODE_REGENERATED', data: { companyId: req.user!.companyId } });
 
     return res.json({ success: true, code: newCode });
   } catch (err: any) {
@@ -830,11 +760,21 @@ router.post('/members/:id/approve', authMiddleware, requireRole(['BOSS']), async
 
       // If site assignments were provided during approval
       if (Array.isArray(siteIds) && siteIds.length > 0) {
+        // Validate that all siteIds belong to req.user!.companyId
+        const validSites = await client.query(
+          `SELECT id FROM sites WHERE company_id = $1 AND id = ANY($2::text[])`,
+          [req.user!.companyId, siteIds]
+        );
+        const validSiteIds: string[] = validSites.rows.map((r: any) => r.id);
+        if (validSiteIds.length !== siteIds.length) {
+          throw new Error('One or more selected sites do not belong to your organization.');
+        }
+
         await client.query('DELETE FROM site_members WHERE user_id = $1 AND company_id = $2', [
           memberId,
           req.user!.companyId,
         ]);
-        for (const siteId of siteIds) {
+        for (const siteId of validSiteIds) {
           const smId = `sm-${memberId}-${siteId}`;
           await client.query(
             'INSERT INTO site_members (id, company_id, site_id, user_id, role, assigned_at) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -855,7 +795,7 @@ router.post('/members/:id/approve', authMiddleware, requireRole(['BOSS']), async
       req.ip
     );
 
-    broadcastChange({ type: 'members', action: 'MEMBER_APPROVED', data: { companyId: req.user!.companyId, memberId } });
+    broadcastChange({ type: 'members', companyId: req.user!.companyId, action: 'MEMBER_APPROVED', data: { companyId: req.user!.companyId, memberId } });
 
     return res.json({ success: true, message: 'Member approved successfully.' });
   } catch (err: any) {
@@ -898,7 +838,7 @@ router.post('/members/:id/reject', authMiddleware, requireRole(['BOSS']), async 
       req.ip
     );
 
-    broadcastChange({ type: 'members', action: 'MEMBER_REJECTED', data: { companyId: req.user!.companyId, memberId } });
+    broadcastChange({ type: 'members', companyId: req.user!.companyId, action: 'MEMBER_REJECTED', data: { companyId: req.user!.companyId, memberId } });
 
     return res.json({ success: true, message: 'Membership request rejected.' });
   } catch (err: any) {
@@ -928,6 +868,16 @@ router.post('/members/:id/assign-sites', authMiddleware, requireRole(['BOSS']), 
 
     if (user.role === 'BOSS') {
       return res.status(400).json({ error: 'Boss accounts have automatic access to all company sites.' });
+    }
+
+    if (siteIds.length > 0) {
+      const validSites = await query<{ id: string }>(
+        `SELECT id FROM sites WHERE company_id = ? AND id = ANY(?::text[])`,
+        [req.user!.companyId, siteIds]
+      );
+      if (validSites.length !== siteIds.length) {
+        return res.status(400).json({ error: 'One or more selected sites do not belong to your organization.' });
+      }
     }
 
     const now = new Date();
@@ -960,7 +910,7 @@ router.post('/members/:id/assign-sites', authMiddleware, requireRole(['BOSS']), 
       req.ip
     );
 
-    broadcastChange({ type: 'members', action: 'SITES_ASSIGNED', data: { companyId: req.user!.companyId, memberId } });
+    broadcastChange({ type: 'members', companyId: req.user!.companyId, action: 'SITES_ASSIGNED', data: { companyId: req.user!.companyId, memberId } });
 
     return res.json({ success: true, assignedSiteIds: siteIds });
   } catch (err: any) {
@@ -1010,7 +960,7 @@ router.patch('/members/:id/role', authMiddleware, requireRole(['BOSS']), async (
       req.ip
     );
 
-    broadcastChange({ type: 'members', action: 'ROLE_UPDATED', data: { companyId: req.user!.companyId, memberId } });
+    broadcastChange({ type: 'members', companyId: req.user!.companyId, action: 'ROLE_UPDATED', data: { companyId: req.user!.companyId, memberId } });
 
     return res.json({ success: true, role });
   } catch (err: any) {
@@ -1057,7 +1007,7 @@ router.patch('/members/:id/status', authMiddleware, requireRole(['BOSS']), async
       req.ip
     );
 
-    broadcastChange({ type: 'members', action: 'STATUS_UPDATED', data: { companyId: req.user!.companyId, memberId } });
+    broadcastChange({ type: 'members', companyId: req.user!.companyId, action: 'STATUS_UPDATED', data: { companyId: req.user!.companyId, memberId } });
 
     return res.json({ success: true, isActive: newIsActive, membershipStatus: newStatus });
   } catch (err: any) {
@@ -1105,7 +1055,7 @@ router.delete('/members/:id', authMiddleware, requireRole(['BOSS']), async (req:
       req.ip
     );
 
-    broadcastChange({ type: 'members', action: 'MEMBER_REMOVED', data: { companyId: req.user!.companyId, memberId } });
+    broadcastChange({ type: 'members', companyId: req.user!.companyId, action: 'MEMBER_REMOVED', data: { companyId: req.user!.companyId, memberId } });
 
     return res.json({ success: true, message: 'Member removed from company.' });
   } catch (err: any) {
@@ -1139,11 +1089,11 @@ router.get('/files/:filename', authMiddleware, async (req: AuthRequest, res: Res
 
     // Verify file ownership and site isolation if recorded in database
     const doc = await getOne<{ company_id: string; site_id: string }>(
-      'SELECT company_id, site_id FROM site_documents WHERE file_url LIKE ? OR file_url LIKE ? LIMIT 1',
+      'SELECT company_id, site_id FROM documents WHERE file_url LIKE ? OR file_url LIKE ? LIMIT 1',
       [`%${filename}%`, `%${filename}`]
     );
     const media = await getOne<{ company_id: string; site_id: string }>(
-      'SELECT company_id, site_id FROM site_media WHERE url LIKE ? OR url LIKE ? LIMIT 1',
+      'SELECT company_id, site_id FROM media_files WHERE url LIKE ? OR url LIKE ? LIMIT 1',
       [`%${filename}%`, `%${filename}`]
     );
 
@@ -1206,6 +1156,7 @@ router.get('/sites', authMiddleware, async (req: AuthRequest, res: Response) => 
       id: s.id,
       name: s.name,
       code: s.code,
+      projectType: s.project_type || 'Residential',
       location: s.location,
       client: s.client,
       projectManager: s.project_manager_name,
@@ -1216,6 +1167,7 @@ router.get('/sites', authMiddleware, async (req: AuthRequest, res: Response) => 
       status: s.status,
       holdReason: s.hold_reason || undefined,
       initialBudget: s.initial_budget || undefined,
+      budget: s.initial_budget ? String(s.initial_budget) : undefined,
       description: s.description || undefined,
       completionDetails: s.completion_date
         ? {
@@ -1237,10 +1189,14 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
   try {
     const {
       name,
+      code,
+      projectType,
       location,
       client,
       projectManager,
       siteEngineer,
+      projectManagerId,
+      siteEngineerId,
       startDate,
       targetEndDate,
       initialBudget,
@@ -1248,7 +1204,7 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
       initialTasks,
     } = req.body;
 
-    if (!name || !location || !client || !projectManager || !siteEngineer || !startDate || !targetEndDate) {
+    if (!name || !location || !client || !startDate || !targetEndDate) {
       return res.status(400).json({ error: 'Missing required site fields.' });
     }
 
@@ -1258,28 +1214,49 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
     );
     const siteId = `site-${Date.now()}`;
     const codeParts = name.trim().split(' ').map((w: string) => w[0]?.toUpperCase()).join('').substring(0, 3) || 'SIT';
-    const siteCode = `${codeParts}-0${parseInt(existingCount?.count || '0', 10) + 1}`;
+    const siteCode = code || `${codeParts}-0${parseInt(existingCount?.count || '0', 10) + 1}`;
     const now = new Date();
 
+    // Authoritative ID-based resolution for PM within company
+    let resolvedPmUser: { id: string; name: string } | null = null;
+    if (projectManagerId) {
+      resolvedPmUser = await getOne<{ id: string; name: string }>(
+        'SELECT id, name FROM users WHERE id = ? AND company_id = ? AND role = ? AND membership_status = ?',
+        [projectManagerId, req.user!.companyId, 'PROJECT_MANAGER', 'ACTIVE']
+      );
+    }
+    const finalPmName = resolvedPmUser ? resolvedPmUser.name : 'Unassigned Project Manager';
+
+    // Authoritative ID-based resolution for Site Engineer within company
+    let resolvedEngUser: { id: string; name: string } | null = null;
+    if (siteEngineerId) {
+      resolvedEngUser = await getOne<{ id: string; name: string }>(
+        'SELECT id, name FROM users WHERE id = ? AND company_id = ? AND role = ? AND membership_status = ?',
+        [siteEngineerId, req.user!.companyId, 'SITE_ENGINEER', 'ACTIVE']
+      );
+    }
+    const finalEngName = resolvedEngUser ? resolvedEngUser.name : 'Unassigned Site Engineer';
+
     // Use transaction to ensure site + members + baseline data are created atomically
-    await withTransaction(async (client) => {
+    await withTransaction(async (tx) => {
       // 1. Create Site
-      await client.query(
+      await tx.query(
         `INSERT INTO sites (
-          id, company_id, name, code, location, client,
+          id, company_id, name, code, project_type, location, client,
           project_manager_name, site_engineer_name, progress_percent,
           start_date, target_end_date, status, initial_budget, description,
           created_by, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, 'Active', $11, $12, $13, $14, $15)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, 'Active', $12, $13, $14, $15, $16)`,
         [
           siteId,
           req.user!.companyId,
           name,
           siteCode,
+          projectType || 'Residential',
           location,
           client,
-          projectManager,
-          siteEngineer,
+          finalPmName,
+          finalEngName,
           startDate,
           targetEndDate,
           initialBudget ? parseFloat(initialBudget) : null,
@@ -1291,29 +1268,27 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
       );
 
       // 2. Assign Boss to this new site
-      await client.query(
+      await tx.query(
         `INSERT INTO site_members (id, company_id, site_id, user_id, role, assigned_at)
          VALUES ($1, $2, $3, $4, 'BOSS', $5) ON CONFLICT DO NOTHING`,
         [`sm-${req.user!.id}-${siteId}`, req.user!.companyId, siteId, req.user!.id, now]
       );
 
-      // 3. Find and assign PM user
-      const pmRes = await client.query('SELECT id FROM users WHERE name = $1 AND role = $2', [projectManager, 'PROJECT_MANAGER']);
-      if (pmRes.rows[0]) {
-        await client.query(
+      // 3. Assign PM user if resolved
+      if (resolvedPmUser) {
+        await tx.query(
           `INSERT INTO site_members (id, company_id, site_id, user_id, role, assigned_at)
            VALUES ($1, $2, $3, $4, 'PROJECT_MANAGER', $5) ON CONFLICT DO NOTHING`,
-          [`sm-${pmRes.rows[0].id}-${siteId}`, req.user!.companyId, siteId, pmRes.rows[0].id, now]
+          [`sm-${resolvedPmUser.id}-${siteId}`, req.user!.companyId, siteId, resolvedPmUser.id, now]
         );
       }
 
-      // 4. Find and assign Engineer user
-      const engRes = await client.query('SELECT id FROM users WHERE name = $1 AND role = $2', [siteEngineer, 'SITE_ENGINEER']);
-      if (engRes.rows[0]) {
-        await client.query(
+      // 4. Assign Engineer user if resolved
+      if (resolvedEngUser) {
+        await tx.query(
           `INSERT INTO site_members (id, company_id, site_id, user_id, role, assigned_at)
            VALUES ($1, $2, $3, $4, 'SITE_ENGINEER', $5) ON CONFLICT DO NOTHING`,
-          [`sm-${engRes.rows[0].id}-${siteId}`, req.user!.companyId, siteId, engRes.rows[0].id, now]
+          [`sm-${resolvedEngUser.id}-${siteId}`, req.user!.companyId, siteId, resolvedEngUser.id, now]
         );
       }
 
@@ -1321,12 +1296,19 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
       if (Array.isArray(initialTasks) && initialTasks.length > 0) {
         for (let i = 0; i < initialTasks.length; i++) {
           const t = initialTasks[i];
-          await client.query(
+          const taskStatus = t.status && ['Pending', 'In Progress', 'Completed', 'Delayed'].includes(t.status)
+            ? t.status
+            : 'Pending';
+          const taskIsToday = t.isToday !== undefined ? Boolean(t.isToday) : (taskStatus === 'In Progress');
+          const taskStartDate = t.startDate || startDate;
+          const taskExpectedDate = t.expectedDate || targetEndDate;
+
+          await tx.query(
             `INSERT INTO tasks (
               id, site_id, company_id, name, description, assigned_team,
               labour_type, location, start_date, expected_date, status,
               is_today, created_by, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Pending', false, $11, $12, $13)`,
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
             [
               `task-${Date.now()}-${i}`,
               siteId,
@@ -1336,8 +1318,10 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
               t.assignedTeam || 'Civil Prep Team',
               t.labourType || 'Helper',
               t.location || 'Site Perimeter',
-              startDate,
-              targetEndDate,
+              taskStartDate,
+              taskExpectedDate,
+              taskStatus,
+              taskIsToday,
               req.user!.id,
               now,
               now,
@@ -1345,12 +1329,12 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
           );
         }
       } else {
-        await client.query(
+        await tx.query(
           `INSERT INTO tasks (
             id, site_id, company_id, name, description, assigned_team,
             labour_type, location, start_date, expected_date, status,
             is_today, created_by, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Pending', true, $11, $12, $13)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'In Progress', true, $11, $12, $13)`,
           [
             `task-${Date.now()}-0`,
             siteId,
@@ -1377,7 +1361,7 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
       ];
       for (let i = 0; i < baselineMaterials.length; i++) {
         const bm = baselineMaterials[i];
-        await client.query(
+        await tx.query(
           `INSERT INTO materials (
             id, site_id, company_id, name, category, required_qty,
             opening_stock, current_stock, used_qty, purchased_qty, unit, min_threshold,
@@ -1411,7 +1395,7 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
       ];
       for (let i = 0; i < labourTypes.length; i++) {
         const lt = labourTypes[i];
-        await client.query(
+        await tx.query(
           `INSERT INTO labour_records (id, site_id, company_id, type, required_count, present_count, record_date, notes, updated_by, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Initial team allotment', $8, $9, $10)`,
           [`lab-${Date.now()}-${i}`, siteId, req.user!.companyId, lt.type, lt.req, lt.pres, now.toISOString().split('T')[0], req.user!.name, now, now]
@@ -1420,13 +1404,14 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
     });
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'CREATE', 'sites', siteId, `Created site: ${name}`);
-    broadcastChange({ type: 'site', siteId, action: 'CREATE' });
+    broadcastChange({ type: 'site', siteId, companyId: req.user!.companyId, action: 'CREATE' });
 
     const createdSite = await getOne('SELECT * FROM sites WHERE id = ?', [siteId]);
     return res.status(201).json({
       id: createdSite.id,
       name: createdSite.name,
       code: createdSite.code,
+      projectType: createdSite.project_type || 'Residential',
       location: createdSite.location,
       client: createdSite.client,
       projectManager: createdSite.project_manager_name,
@@ -1435,6 +1420,9 @@ router.post('/sites', authMiddleware, requireRole(['BOSS']), async (req: AuthReq
       startDate: createdSite.start_date,
       targetEndDate: createdSite.target_end_date,
       status: createdSite.status,
+      initialBudget: createdSite.initial_budget || undefined,
+      budget: createdSite.initial_budget ? String(createdSite.initial_budget) : undefined,
+      description: createdSite.description || undefined,
     });
   } catch (err: any) {
     console.error('Error creating site:', err);
@@ -1460,7 +1448,7 @@ router.patch('/sites/:id/status', authMiddleware, checkSiteAccess(), async (req:
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'UPDATE_STATUS', 'sites', siteId, `Status changed to ${status}`);
-    broadcastChange({ type: 'site', siteId, action: 'UPDATE_STATUS', data: { status, holdReason } });
+    broadcastChange({ type: 'site', siteId, companyId: req.user!.companyId, action: 'UPDATE_STATUS', data: { status, holdReason } });
 
     return res.json({ success: true, siteId, status, holdReason });
   } catch (err: any) {
@@ -1532,7 +1520,7 @@ router.post('/sites/:id/complete', authMiddleware, checkSiteAccess(), requireRol
     });
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'COMPLETE_SITE', 'sites', siteId, `Formal handover completed: ${remarks || ''}`);
-    broadcastChange({ type: 'site', siteId, action: 'COMPLETE', data: { status: 'Completed', completionDate: cDate } });
+    broadcastChange({ type: 'site', siteId, companyId: req.user!.companyId, action: 'COMPLETE', data: { status: 'Completed', completionDate: cDate } });
 
     return res.json({ success: true, siteId, status: 'Completed', completionDate: cDate });
   } catch (err: any) {
@@ -1595,13 +1583,16 @@ router.get('/tasks', authMiddleware, async (req: AuthRequest, res: Response) => 
 
 router.post('/tasks', authMiddleware, checkSiteAccess((req) => req.body.siteId), async (req: AuthRequest, res: Response) => {
   try {
-    const { siteId, name, description, assignedTeam, labourType, location, startDate, expectedDate, isToday } = req.body;
+    const { siteId, name, description, assignedTeam, labourType, location, startDate, expectedDate, status, isToday } = req.body;
     if (!siteId || !name || !startDate || !expectedDate) {
       return res.status(400).json({ error: 'Missing required task fields.' });
     }
 
     const id = `task-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date();
+    const taskStatus = status && ['Pending', 'In Progress', 'Completed', 'Delayed'].includes(status)
+      ? status
+      : 'Pending';
 
     await execute(
       `INSERT INTO tasks (
@@ -1620,7 +1611,7 @@ router.post('/tasks', authMiddleware, checkSiteAccess((req) => req.body.siteId),
         location || 'Site Perimeter',
         startDate,
         expectedDate,
-        'Pending',
+        taskStatus,
         isToday ? true : false,
         req.user!.id,
         now,
@@ -1629,7 +1620,7 @@ router.post('/tasks', authMiddleware, checkSiteAccess((req) => req.body.siteId),
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'CREATE', 'tasks', id, `Created task: ${name}`);
-    broadcastChange({ type: 'task', siteId, action: 'CREATE', data: { id, name } });
+    broadcastChange({ type: 'task', siteId, companyId: req.user!.companyId, action: 'CREATE', data: { id, name } });
 
     return res.status(201).json({
       id,
@@ -1641,7 +1632,7 @@ router.post('/tasks', authMiddleware, checkSiteAccess((req) => req.body.siteId),
       location,
       startDate,
       expectedDate,
-      status: 'Pending',
+      status: taskStatus,
       isToday: !!isToday,
     });
   } catch (err: any) {
@@ -1673,7 +1664,7 @@ router.patch('/tasks/:id/status', authMiddleware, async (req: AuthRequest, res: 
     );
 
     await logAudit(task.company_id, task.site_id, req.user!.id, 'UPDATE_STATUS', 'tasks', task.id, `Task status: ${status}`);
-    broadcastChange({ type: 'task', siteId: task.site_id, action: 'UPDATE_STATUS', data: { id: task.id, status } });
+    broadcastChange({ type: 'task', siteId: task.site_id, companyId: task.company_id, action: 'UPDATE_STATUS', data: { id: task.id, status } });
 
     return res.json({ success: true, id: task.id, status });
   } catch (err: any) {
@@ -1714,7 +1705,7 @@ router.patch('/tasks/:id/delay', authMiddleware, async (req: AuthRequest, res: R
     );
 
     await logAudit(task.company_id, task.site_id, req.user!.id, 'DELAY_TASK', 'tasks', task.id, `Delayed: ${reason} - ${explanation}`);
-    broadcastChange({ type: 'task', siteId: task.site_id, action: 'DELAY', data: { id: task.id, reason, newExpectedDate } });
+    broadcastChange({ type: 'task', siteId: task.site_id, companyId: task.company_id, action: 'DELAY', data: { id: task.id, reason, newExpectedDate } });
 
     return res.json({ success: true, id: task.id, status: 'Delayed', reason, newExpectedDate });
   } catch (err: any) {
@@ -1755,7 +1746,7 @@ router.patch('/tasks/:id/complete', authMiddleware, async (req: AuthRequest, res
     );
 
     await logAudit(task.company_id, task.site_id, req.user!.id, 'COMPLETE_TASK', 'tasks', task.id, `Task completed`);
-    broadcastChange({ type: 'task', siteId: task.site_id, action: 'COMPLETE', data: { id: task.id } });
+    broadcastChange({ type: 'task', siteId: task.site_id, companyId: task.company_id, action: 'COMPLETE', data: { id: task.id } });
 
     return res.json({ success: true, id: task.id, status: 'Completed', completedDate: todayStr });
   } catch (err: any) {
@@ -1850,7 +1841,7 @@ router.post('/materials', authMiddleware, checkSiteAccess((req) => req.body.site
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'CREATE', 'materials', id, `Added material: ${name}`);
-    broadcastChange({ type: 'material', siteId, action: 'CREATE', data: { id, name } });
+    broadcastChange({ type: 'material', siteId, companyId: req.user!.companyId, action: 'CREATE', data: { id, name } });
 
     return res.status(201).json({
       id,
@@ -1939,7 +1930,7 @@ router.patch('/materials/:id/stock', authMiddleware, async (req: AuthRequest, re
       material.id,
       `Stock updated to ${newStock} ${material.unit}`
     );
-    broadcastChange({ type: 'material', siteId: material.site_id, action: 'UPDATE_STOCK', data: { id: material.id, currentStock: newStock } });
+    broadcastChange({ type: 'material', siteId: material.site_id, companyId: material.company_id, action: 'UPDATE_STOCK', data: { id: material.id, currentStock: newStock } });
 
     return res.json({ success: true, id: material.id, currentStock: newStock, usedQty: totalUsed });
   } catch (err: any) {
@@ -2007,7 +1998,7 @@ router.post('/labour', authMiddleware, checkSiteAccess((req) => req.body.siteId)
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'CREATE', 'labour', id, `Added labour category: ${type}`);
-    broadcastChange({ type: 'labour', siteId, action: 'CREATE' });
+    broadcastChange({ type: 'labour', siteId, companyId: req.user!.companyId, action: 'CREATE' });
 
     return res.status(201).json({ id, siteId, type, required: parseInt(required, 10) || 0, present: parseInt(present, 10) || 0 });
   } catch (err: any) {
@@ -2049,7 +2040,7 @@ router.patch('/labour/:id/attendance', authMiddleware, async (req: AuthRequest, 
     }
 
     await logAudit(labourItem.company_id, labourItem.site_id, req.user!.id, 'UPDATE_ATTENDANCE', 'labour', labourItem.id, `Labour attendance updated for ${labourItem.type}`);
-    broadcastChange({ type: 'labour', siteId: labourItem.site_id, action: 'UPDATE_ATTENDANCE' });
+    broadcastChange({ type: 'labour', siteId: labourItem.site_id, companyId: labourItem.company_id, action: 'UPDATE_ATTENDANCE' });
 
     return res.json({ success: true, id: labourItem.id, present });
   } catch (err: any) {
@@ -2096,6 +2087,9 @@ router.get('/equipment', authMiddleware, async (req: AuthRequest, res: Response)
       currentSiteId: eq.current_site_id || undefined,
       assignedOperator: eq.operator_name || undefined,
       hoursOperated: eq.hours_operated,
+      lastMaintenance: eq.last_maintenance_date || 'N/A',
+      lastMaintenanceDate: eq.last_maintenance_date || undefined,
+      nextMaintenance: eq.next_service_date || 'N/A',
       nextServiceDate: eq.next_service_date || undefined,
       breakdownReason: eq.breakdown_reason || undefined,
       notes: eq.notes || undefined,
@@ -2110,7 +2104,7 @@ router.get('/equipment', authMiddleware, async (req: AuthRequest, res: Response)
 
 router.post('/equipment', authMiddleware, checkSiteAccess((req) => req.body.currentSiteId), async (req: AuthRequest, res: Response) => {
   try {
-    const { name, type, status, currentSiteId, notes } = req.body;
+    const { name, type, status, currentSiteId, notes, lastMaintenance, nextMaintenance, lastMaintenanceDate, nextServiceDate } = req.body;
     const assignedOperator = req.body.assignedOperator || req.body.operatorName || req.body.operator || null;
     if (!name || !type) {
       return res.status(400).json({ error: 'Name and type are required.' });
@@ -2118,19 +2112,33 @@ router.post('/equipment', authMiddleware, checkSiteAccess((req) => req.body.curr
 
     const id = `eq-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date();
+    const canonicalStatus = status || 'Available';
+
+    const finalLastMaint = lastMaintenance || lastMaintenanceDate || now.toISOString().split('T')[0];
+    const finalNextMaint = nextMaintenance || nextServiceDate || null;
 
     await execute(
       `INSERT INTO equipment (
         id, company_id, current_site_id, name, type, status,
-        operator_name, hours_operated, notes, last_updated, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'Today', ?, ?)`,
-      [id, req.user!.companyId, currentSiteId || null, name, type, status || 'Available', assignedOperator, notes || null, now, now]
+        operator_name, hours_operated, notes, last_maintenance_date, next_service_date, last_updated, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'Today', ?, ?)`,
+      [id, req.user!.companyId, currentSiteId || null, name, type, canonicalStatus, assignedOperator, notes || null, finalLastMaint, finalNextMaint, now, now]
     );
 
     await logAudit(req.user!.companyId, currentSiteId || null, req.user!.id, 'CREATE', 'equipment', id, `Added equipment: ${name}`);
-    broadcastChange({ type: 'equipment', siteId: currentSiteId, action: 'CREATE' });
+    broadcastChange({ type: 'equipment', siteId: currentSiteId, companyId: req.user!.companyId, action: 'CREATE' });
 
-    return res.status(201).json({ id, name, type, status: status || 'Available', currentSiteId, assignedOperator, lastUpdated: 'Today' });
+    return res.status(201).json({
+      id,
+      name,
+      type,
+      status: canonicalStatus,
+      currentSiteId,
+      assignedOperator,
+      lastMaintenance: finalLastMaint,
+      nextMaintenance: finalNextMaint || 'N/A',
+      lastUpdated: 'Today',
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -2158,19 +2166,21 @@ router.patch('/equipment/:id/status', authMiddleware, async (req: AuthRequest, r
     }
 
     const now = new Date();
+    const canonicalStatus = status;
+
     await execute(
       `UPDATE equipment
        SET status = ?, notes = COALESCE(?, notes), current_site_id = COALESCE(?, current_site_id),
            breakdown_reason = ?, last_updated = 'Today', updated_at = ?
        WHERE id = ?`,
-      [status, notes || null, currentSiteId || null, status === 'Under Breakdown' ? breakdownReason : null, now, eq.id]
+      [canonicalStatus, notes || null, currentSiteId || null, canonicalStatus === 'Breakdown' ? breakdownReason : null, now, eq.id]
     );
 
     const targetSiteId = currentSiteId || eq.current_site_id;
-    await logAudit(eq.company_id, targetSiteId || null, req.user!.id, 'UPDATE_EQUIPMENT_STATUS', 'equipment', eq.id, `Status: ${status}`);
-    broadcastChange({ type: 'equipment', siteId: targetSiteId || undefined, action: 'UPDATE_STATUS' });
+    await logAudit(eq.company_id, targetSiteId || null, req.user!.id, 'UPDATE_EQUIPMENT_STATUS', 'equipment', eq.id, `Status: ${canonicalStatus}`);
+    broadcastChange({ type: 'equipment', siteId: targetSiteId || undefined, companyId: eq.company_id, action: 'UPDATE_STATUS' });
 
-    return res.json({ success: true, id: eq.id, status });
+    return res.json({ success: true, id: eq.id, status: canonicalStatus });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -2244,7 +2254,7 @@ router.post('/problems', authMiddleware, checkSiteAccess((req) => req.body.siteI
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'REPORT_PROBLEM', 'problems', id, `Problem reported: ${title}`);
-    broadcastChange({ type: 'problem', siteId, action: 'CREATE', data: { id, title } });
+    broadcastChange({ type: 'problem', siteId, companyId: req.user!.companyId, action: 'CREATE', data: { id, title } });
 
     return res.status(201).json({
       id,
@@ -2289,7 +2299,7 @@ router.patch('/problems/:id/resolve', authMiddleware, async (req: AuthRequest, r
     );
 
     await logAudit(problem.company_id, problem.site_id, req.user!.id, 'RESOLVE_PROBLEM', 'problems', problem.id, `Problem resolved: ${problem.title}`);
-    broadcastChange({ type: 'problem', siteId: problem.site_id, action: 'RESOLVE', data: { id: problem.id } });
+    broadcastChange({ type: 'problem', siteId: problem.site_id, companyId: problem.company_id, action: 'RESOLVE', data: { id: problem.id } });
 
     return res.json({ success: true, id: problem.id, status: 'Resolved', resolutionNotes });
   } catch (err: any) {
@@ -2382,7 +2392,7 @@ router.post('/resource-requests', authMiddleware, checkSiteAccess((req) => req.b
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'CREATE_REQUEST', 'resource_requests', id, `Requested: ${quantity} ${unit} of ${item}`);
-    broadcastChange({ type: 'resource_request', siteId, action: 'CREATE', data: { id, item } });
+    broadcastChange({ type: 'resource_request', siteId, companyId: req.user!.companyId, action: 'CREATE', data: { id, item } });
 
     return res.status(201).json({
       id,
@@ -2429,7 +2439,7 @@ router.patch('/resource-requests/:id/status', authMiddleware, requireRole(['BOSS
     );
 
     await logAudit(reqItem.company_id, reqItem.site_id, req.user!.id, 'UPDATE_REQUEST_STATUS', 'resource_requests', reqItem.id, `Status: ${status}`);
-    broadcastChange({ type: 'resource_request', siteId: reqItem.site_id, action: 'UPDATE_STATUS' });
+    broadcastChange({ type: 'resource_request', siteId: reqItem.site_id, companyId: reqItem.company_id, action: 'UPDATE_STATUS' });
 
     return res.json({ success: true, id: reqItem.id, status });
   } catch (err: any) {
@@ -2593,7 +2603,7 @@ router.post('/reports', authMiddleware, checkSiteAccess((req) => req.body.siteId
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'SUBMIT_REPORT', 'daily_reports', id, `Submitted daily log for ${date}`);
-    broadcastChange({ type: 'report', siteId, action: 'CREATE' });
+    broadcastChange({ type: 'report', siteId, companyId: req.user!.companyId, action: 'CREATE' });
 
     return res.status(201).json({ id, siteId, date, engineerName: req.user!.name });
   } catch (err: any) {
@@ -2678,7 +2688,7 @@ router.post('/documents', authMiddleware, checkSiteAccess((req) => req.body.site
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'UPLOAD_DOCUMENT', 'documents', id, `Document uploaded: ${title}`);
-    broadcastChange({ type: 'document', siteId, action: 'CREATE' });
+    broadcastChange({ type: 'document', siteId, companyId: req.user!.companyId, action: 'CREATE' });
 
     return res.status(201).json({ id, siteId, title, category, fileType: fileType || 'PDF', fileSize: fileSize || '1.2 MB', uploadedBy: req.user!.name, uploadedDate: dateStr, downloadUrl: downloadUrl || '/placeholder.pdf' });
   } catch (err: any) {
@@ -2735,7 +2745,7 @@ router.post('/media', authMiddleware, checkSiteAccess((req) => req.body.siteId),
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'UPLOAD_MEDIA', 'media_files', id, `Media uploaded: ${title}`);
-    broadcastChange({ type: 'media', siteId, action: 'CREATE' });
+    broadcastChange({ type: 'media', siteId, companyId: req.user!.companyId, action: 'CREATE' });
 
     return res.status(201).json({ id, siteId, title, category: category || 'Site Progress', mediaType: mediaType || 'image', url, uploadedBy: req.user!.name, date: dateStr });
   } catch (err: any) {
@@ -2782,7 +2792,7 @@ router.post('/expenses', authMiddleware, checkSiteAccess((req) => req.body.siteI
     );
 
     await logAudit(req.user!.companyId, siteId, req.user!.id, 'CREATE_EXPENSE', 'expenses', id, `Expense recorded: ${amount} for ${category}`);
-    broadcastChange({ type: 'expense', siteId, action: 'CREATE' });
+    broadcastChange({ type: 'expense', siteId, companyId: req.user!.companyId, action: 'CREATE' });
 
     return res.status(201).json({ id, siteId, category, amount: parseFloat(amount) || 0, paymentStatus: 'Pending' });
   } catch (err: any) {
@@ -2885,12 +2895,12 @@ router.get('/alerts', authMiddleware, async (req: AuthRequest, res: Response) =>
     let brokenDown: { count: string }[];
     if (isBoss) {
       brokenDown = await query<{ count: string }>(
-        "SELECT COUNT(*) as count FROM equipment WHERE company_id = ? AND status = 'Under Breakdown'",
+        "SELECT COUNT(*) as count FROM equipment WHERE company_id = ? AND status = 'Breakdown'",
         [companyId]
       );
     } else {
       brokenDown = await query<{ count: string }>(
-        `SELECT COUNT(*) as count FROM equipment WHERE company_id = ? AND current_site_id IN (${sitePlaceholders}) AND status = 'Under Breakdown'`,
+        `SELECT COUNT(*) as count FROM equipment WHERE company_id = ? AND current_site_id IN (${sitePlaceholders}) AND status = 'Breakdown'`,
         [companyId, ...siteIds]
       );
     }

@@ -36,7 +36,7 @@ async function setupBoss() {
       console.log(`Using existing company: ${compRes.rows[0].name} (${companyId}, Code: ${compRes.rows[0].code})`);
     } else {
       companyId = `comp-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-      const code = 'SITE2026';
+      const code = process.env.SITEPOINT_COMPANY_CODE?.trim() || crypto.randomBytes(4).toString('hex').toUpperCase();
       const now = new Date();
       await client.query(
         'INSERT INTO companies (id, name, code, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)',
@@ -45,7 +45,7 @@ async function setupBoss() {
       console.log(`Created new company: SITEPOINT Constructions (${companyId}, Code: ${code})`);
     }
 
-    const email = 'boss@sitepoint.com';
+    const email = (process.env.SITEPOINT_BOSS_EMAIL?.trim() || 'boss@sitepoint.com').toLowerCase();
     const plainPassword = bootstrapPassword;
     const name = 'SITEPOINT Admin';
     const role = 'BOSS';
@@ -53,16 +53,16 @@ async function setupBoss() {
     const passwordHash = bcrypt.hashSync(plainPassword, salt);
     const now = new Date();
 
-    // 2. Check if a user with this email or an existing Boss user exists
+    // 2. Check if a user with this specific email already exists
     const existingUser = await client.query(
-      'SELECT id, email, role FROM users WHERE LOWER(email) = $1 OR role = $2 ORDER BY (LOWER(email) = $1) DESC LIMIT 1',
-      [email, role]
+      'SELECT id, email, role FROM users WHERE LOWER(email) = $1 LIMIT 1',
+      [email]
     );
 
     let userId: string;
     if (existingUser.rows.length > 0) {
       userId = existingUser.rows[0].id;
-      console.log(`Updating existing user/boss account (${userId}, previous email: ${existingUser.rows[0].email})...`);
+      console.log(`Updating existing boss account (${userId}, email: ${existingUser.rows[0].email})...`);
       await client.query(
         `UPDATE users
          SET email = $1,
@@ -86,12 +86,6 @@ async function setupBoss() {
         [userId, companyId, email, passwordHash, name, now, now]
       );
     }
-
-    // Clean up any extraneous boss accounts if any to ensure exactly ONE controlled Boss
-    await client.query(
-      "UPDATE users SET role = 'PROJECT_MANAGER' WHERE role = 'BOSS' AND id != $1",
-      [userId]
-    );
 
     await client.query('COMMIT');
     console.log('✅ Boss account successfully configured:');
