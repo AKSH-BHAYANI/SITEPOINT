@@ -118,7 +118,7 @@ export const LoginPage: React.FC = () => {
 
       {/* Main Auth Card */}
       <div className="mt-7 sm:mx-auto sm:w-full sm:max-w-md px-4">
-        <div className="bg-white py-7 px-6 shadow-2xl rounded-3xl sm:px-9 border border-slate-200 text-slate-900">
+        <div className="bg-white py-7 px-6 shadow-xl rounded-xl sm:px-8 border border-slate-200 text-slate-900">
           {/* Navigation Tabs */}
           <div className="flex border-b border-slate-200 mb-6 pb-2">
             <button

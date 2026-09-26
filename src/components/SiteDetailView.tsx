@@ -302,27 +302,47 @@ export const SiteDetailView: React.FC<Props> = ({
 
         {/* SITE NAVIGATION TABS (Strictly: Overview | Tasks | Materials | Labour | Equipment | Reports | Documents) */}
         <div className="mt-6 pt-4 border-t border-slate-200">
-          <nav className="flex space-x-1 sm:space-x-2 overflow-x-auto pb-1" aria-label="Site Navigation">
+          <nav className="flex space-x-1 sm:space-x-1.5 overflow-x-auto pb-1" aria-label="Site Navigation">
             {TABS.map((tab) => {
               const isActive = activeSiteTab === tab;
+              const count =
+                tab === 'Tasks'
+                  ? siteTasks.length
+                  : tab === 'Materials'
+                  ? siteMaterials.length
+                  : tab === 'Labour'
+                  ? siteLabour.length
+                  : tab === 'Equipment'
+                  ? siteEquipment.length
+                  : tab === 'Reports'
+                  ? siteReports.length
+                  : tab === 'Documents'
+                  ? siteDocuments.length
+                  : null;
+
               return (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => setActiveSiteTab(tab)}
-                  className={`px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center space-x-1.5 ${
                     isActive
-                      ? 'bg-slate-900 text-white shadow-xs'
+                      ? 'bg-slate-900 text-white shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  {tab === 'Overview' && '📊 Overview'}
-                  {tab === 'Tasks' && `📋 Tasks (${siteTasks.length})`}
-                  {tab === 'Materials' && `📦 Materials (${siteMaterials.length})`}
-                  {tab === 'Labour' && `👷 Labour (${siteLabour.length})`}
-                  {tab === 'Equipment' && `🚜 Equipment (${siteEquipment.length})`}
-                  {tab === 'Reports' && `📝 Reports (${siteReports.length})`}
-                  {tab === 'Documents' && `📁 Documents (${siteDocuments.length})`}
+                  <span>{tab}</span>
+                  {count !== null && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded font-mono tabular-nums ${
+                        isActive
+                          ? 'bg-slate-800 text-slate-200'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
                 </button>
               );
             })}

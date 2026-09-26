@@ -1,10 +1,18 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Task } from './types';
-import { Header } from './components/Header';
-import { BossDashboard } from './components/BossDashboard';
-import { ProjectManagerDashboard } from './components/ProjectManagerDashboard';
-import { SiteEngineerDashboard } from './components/SiteEngineerDashboard';
+import { AppShell } from './components/layout/AppShell';
+import { NavPage } from './components/layout/Sidebar';
+import { DashboardPage } from './components/pages/DashboardPage';
+import { SitesPage } from './components/pages/SitesPage';
+import { TasksPage } from './components/pages/TasksPage';
+import { MaterialsPage } from './components/pages/MaterialsPage';
+import { LabourPage } from './components/pages/LabourPage';
+import { EquipmentPage } from './components/pages/EquipmentPage';
+import { ReportsPage } from './components/pages/ReportsPage';
+import { ProblemsPage } from './components/pages/ProblemsPage';
+import { RequestsPage } from './components/pages/RequestsPage';
+import { SettingsPage } from './components/pages/SettingsPage';
 import { SiteDetailView } from './components/SiteDetailView';
 import { LoginPage } from './components/LoginPage';
 import { InitialSetupPage } from './components/InitialSetupPage';
@@ -39,52 +47,7 @@ const MainApp: React.FC = () => {
     checkBootstrapStatus,
   } = useApp();
 
-  // If initial auth or sync is booting, display sleek loader
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
-        <div className="h-12 w-12 rounded-2xl bg-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/20 mb-4 animate-bounce">
-          <Building2 className="h-6 w-6 text-slate-950 stroke-[2.5]" />
-        </div>
-        <div className="text-sm font-bold tracking-wider text-slate-200 uppercase">SITEPOINT</div>
-        <div className="text-xs text-slate-400 mt-1">Connecting to multi-site database...</div>
-      </div>
-    );
-  }
-
-  // If database is temporarily unavailable, show clear error and allow retry
-  if (bootstrapError) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
-        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-3xl p-8 text-center shadow-2xl">
-          <div className="h-12 w-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-4 border border-rose-500/30">
-            <AlertCircle className="h-6 w-6" />
-          </div>
-          <h2 className="text-lg font-bold text-white mb-2">Database Unavailable</h2>
-          <p className="text-xs text-slate-400 mb-6 leading-relaxed">
-            {bootstrapError}
-          </p>
-          <button
-            onClick={() => checkBootstrapStatus()}
-            className="w-full flex items-center justify-center py-3 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-xl transition cursor-pointer shadow-md"
-          >
-            <RefreshCw className="h-4 w-4 mr-2 stroke-[2.5]" />
-            <span>Retry Connection</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // If initial Boss setup is required on fresh deployment
-  if (isBootstrapRequired) {
-    return <InitialSetupPage onSetupComplete={async () => { await checkBootstrapStatus(); }} />;
-  }
-
-  // If no authenticated user, display login page
-  if (!currentUser) {
-    return <LoginPage />;
-  }
+  const [currentPage, setCurrentPage] = useState<NavPage>('dashboard');
 
   // Modal orchestration
   const [activeModal, setActiveModal] = useState<
@@ -106,6 +69,62 @@ const MainApp: React.FC = () => {
 
   const [modalSiteId, setModalSiteId] = useState<string | undefined>(undefined);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+
+  // If initial auth or sync is booting, display sleek loader
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
+        <div className="h-10 w-10 rounded-xl bg-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/20 mb-3 animate-pulse">
+          <Building2 className="h-5 w-5 text-slate-950 stroke-[2.5]" />
+        </div>
+        <div className="text-xs font-bold tracking-widest text-slate-200 uppercase">SITEPOINT</div>
+        <div className="text-[11px] text-slate-400 mt-1">Synchronizing construction workspace...</div>
+      </div>
+    );
+  }
+
+  // If database is temporarily unavailable, show clear error and allow retry
+  if (bootstrapError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-4">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-xl p-8 text-center shadow-2xl">
+          <div className="h-12 w-12 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-4 border border-rose-500/30">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h2 className="text-base font-bold text-white mb-2">Database Connection Error</h2>
+          <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+            {bootstrapError}
+          </p>
+          <button
+            onClick={() => checkBootstrapStatus()}
+            className="w-full flex items-center justify-center py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-lg transition cursor-pointer shadow-md"
+          >
+            <RefreshCw className="h-4 w-4 mr-2 stroke-[2.5]" />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // If initial Boss setup is required on fresh deployment
+  if (isBootstrapRequired) {
+    return <InitialSetupPage onSetupComplete={async () => { await checkBootstrapStatus(); }} />;
+  }
+
+  // If no authenticated user, display login page
+  if (!currentUser) {
+    return <LoginPage />;
+  }
+
+  // Navigation handler
+  const handleNavigate = (page: NavPage) => {
+    // If switching to another page while a site detail was open, reset selected site unless going to 'sites'
+    if (page !== 'sites') {
+      setSelectedSiteId(null);
+    }
+    setCurrentPage(page);
+  };
 
   // Modal Handlers
   const handleOpenNewSite = () => {
@@ -167,59 +186,135 @@ const MainApp: React.FC = () => {
     setActiveModal('completeTask');
   };
 
-  return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
-      {/* Universal Top Navigation */}
-      <Header
-        onOpenSearch={() => setActiveModal('search')}
-        onRequestResource={() => handleOpenResourceRequest()}
-      />
+  // Render active page view
+  const renderCurrentView = () => {
+    if (selectedSiteId) {
+      return (
+        <SiteDetailView
+          onOpenNewTask={handleOpenNewTask}
+          onOpenResourceRequest={handleOpenResourceRequest}
+          onReportProblem={handleReportProblem}
+          onOpenDailyReport={handleOpenDailyReport}
+          onOpenAddMaterial={handleOpenAddMaterial}
+          onOpenAddEquipment={handleOpenAddEquipment}
+          onOpenAddDocument={handleOpenAddDocument}
+          onMarkTaskDelayed={handleMarkTaskDelayed}
+          onMarkTaskCompleted={handleMarkTaskCompleted}
+          onOpenCompleteSite={handleOpenCompleteSite}
+          onOpenChangeStatus={handleOpenChangeStatus}
+        />
+      );
+    }
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-12">
-        {selectedSiteId ? (
-          <SiteDetailView
+    switch (currentPage) {
+      case 'dashboard':
+        return (
+          <DashboardPage
+            onNavigate={(page) => {
+              setCurrentPage(page);
+            }}
             onOpenNewTask={handleOpenNewTask}
             onOpenResourceRequest={handleOpenResourceRequest}
-            onReportProblem={handleReportProblem}
+            onOpenReportProblem={handleReportProblem}
+            onOpenNewSite={handleOpenNewSite}
             onOpenDailyReport={handleOpenDailyReport}
-            onOpenAddMaterial={handleOpenAddMaterial}
-            onOpenAddEquipment={handleOpenAddEquipment}
-            onOpenAddDocument={handleOpenAddDocument}
-            onMarkTaskDelayed={handleMarkTaskDelayed}
-            onMarkTaskCompleted={handleMarkTaskCompleted}
+          />
+        );
+
+      case 'sites':
+        return (
+          <SitesPage
+            onOpenNewSite={handleOpenNewSite}
             onOpenCompleteSite={handleOpenCompleteSite}
             onOpenChangeStatus={handleOpenChangeStatus}
           />
-        ) : role === 'BOSS' ? (
-          <BossDashboard
-            onOpenNewTask={handleOpenNewTask}
-            onOpenResourceRequest={handleOpenResourceRequest}
-            onOpenNewSite={handleOpenNewSite}
-          />
-        ) : role === 'PROJECT_MANAGER' ? (
-          <ProjectManagerDashboard
-            onOpenNewTask={handleOpenNewTask}
-            onOpenResourceRequest={handleOpenResourceRequest}
-            onReportProblem={handleReportProblem}
-          />
-        ) : (
-          <SiteEngineerDashboard
-            onOpenNewTask={handleOpenNewTask}
-            onOpenResourceRequest={handleOpenResourceRequest}
-            onReportProblem={handleReportProblem}
-            onOpenDailyReport={handleOpenDailyReport}
-            onMarkTaskDelayed={handleMarkTaskDelayed}
-            onMarkTaskCompleted={handleMarkTaskCompleted}
-          />
-        )}
-      </main>
+        );
 
-      {/* Modals Container */}
+      case 'tasks':
+        return (
+          <TasksPage
+            onOpenNewTask={handleOpenNewTask}
+            onMarkTaskCompleted={handleMarkTaskCompleted}
+            onMarkTaskDelayed={handleMarkTaskDelayed}
+          />
+        );
+
+      case 'materials':
+        return (
+          <MaterialsPage
+            onOpenAddMaterial={handleOpenAddMaterial}
+          />
+        );
+
+      case 'labour':
+        return <LabourPage />;
+
+      case 'equipment':
+        return (
+          <EquipmentPage
+            onOpenAddEquipment={handleOpenAddEquipment}
+          />
+        );
+
+      case 'reports':
+        return (
+          <ReportsPage
+            onOpenDailyReport={handleOpenDailyReport}
+          />
+        );
+
+      case 'problems':
+        return (
+          <ProblemsPage
+            onOpenReportProblem={handleReportProblem}
+          />
+        );
+
+      case 'requests':
+        return (
+          <RequestsPage
+            onOpenResourceRequest={handleOpenResourceRequest}
+          />
+        );
+
+      case 'settings':
+        return <SettingsPage />;
+
+      default:
+        return (
+          <DashboardPage
+            onNavigate={(page) => setCurrentPage(page)}
+            onOpenNewTask={handleOpenNewTask}
+            onOpenResourceRequest={handleOpenResourceRequest}
+            onOpenReportProblem={handleReportProblem}
+            onOpenNewSite={handleOpenNewSite}
+            onOpenDailyReport={handleOpenDailyReport}
+          />
+        );
+    }
+  };
+
+  return (
+    <AppShell
+      currentPage={currentPage}
+      onNavigate={handleNavigate}
+      onOpenSearch={() => setActiveModal('search')}
+      onOpenNewTask={() => handleOpenNewTask()}
+      onOpenResourceRequest={() => handleOpenResourceRequest()}
+      onOpenReportProblem={() => handleReportProblem()}
+      onOpenNewSite={role === 'BOSS' ? handleOpenNewSite : undefined}
+    >
+      {renderCurrentView()}
+
+      {/* Modals Suite */}
       {activeModal === 'newSite' && (
         <NewSiteModal
           onClose={() => setActiveModal(null)}
-          onSuccess={(siteOrId: any) => setSelectedSiteId(typeof siteOrId === 'string' ? siteOrId : (siteOrId?.id || null))}
+          onSuccess={(siteOrId: any) => {
+            const newId = typeof siteOrId === 'string' ? siteOrId : siteOrId?.id || null;
+            setSelectedSiteId(newId);
+            setCurrentPage('sites');
+          }}
         />
       )}
 
@@ -252,28 +347,6 @@ const MainApp: React.FC = () => {
         })()
       )}
 
-      {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-6 px-4 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center space-x-2">
-            <span className="font-bold text-slate-900">SITEPOINT</span>
-            <span>—</span>
-            <span>“One place to manage every construction site.”</span>
-          </div>
-          <div className="flex items-center space-x-4 text-slate-600">
-            <span>Multi-Site Construction Management</span>
-            <span>•</span>
-            <button
-              onClick={() => setSelectedSiteId(null)}
-              className="hover:text-amber-600 font-semibold cursor-pointer"
-            >
-              All Sites
-            </button>
-          </div>
-        </div>
-      </footer>
-
-      {/* Modals Suite */}
       {activeModal === 'newTask' && (
         <NewTaskModal
           defaultSiteId={modalSiteId}
@@ -348,7 +421,7 @@ const MainApp: React.FC = () => {
           onClose={() => setActiveModal(null)}
         />
       )}
-    </div>
+    </AppShell>
   );
 };
 
